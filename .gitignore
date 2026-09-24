@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build artifacts
+build/
+dist/
+*.manifest
+*.spec.bak
+
+# Test artifacts & generated PDFs
+tests/__pycache__/
+*.pdf
+*.tmp
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+scratch/
+
+# User-specific & OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Virtual Environments
+venv/
+.env
+env/
+ENV/

@@ -70,29 +70,7 @@ class EditorView(ctk.CTkFrame):
         lbl_editor_icon = ctk.CTkLabel(left_header, image=self.editor_icon, text="")
         lbl_editor_icon.pack(side="left", padx=(0, 4))
 
-        # Center: Document Info
-        info_box = ctk.CTkFrame(header, fg_color="transparent")
-        info_box.pack(side="left", fill="both", expand=True, pady=6)
-
-        self.lbl_doc_title = ctk.CTkLabel(
-            info_box,
-            text=self.doc.title,
-            font=ctk.CTkFont(size=17, weight="bold"),
-            text_color=("#1a365d", "#63b3ed"),
-            anchor="w",
-        )
-        self.lbl_doc_title.pack(anchor="w")
-
-        self.lbl_doc_sub = ctk.CTkLabel(
-            info_box,
-            text=self._format_subtitle(),
-            font=ctk.CTkFont(size=11),
-            text_color=("gray40", "gray60"),
-            anchor="w",
-        )
-        self.lbl_doc_sub.pack(anchor="w")
-
-        # Right: Edit Metadata, Language Toggle, & Auto-save Status
+        # Right: Edit Metadata, Language Toggle, & Auto-save Status (Packed FIRST to prevent shrinking)
         right_box = ctk.CTkFrame(header, fg_color="transparent")
         right_box.pack(side="right", padx=12, pady=10)
 
@@ -132,6 +110,28 @@ class EditorView(ctk.CTkFrame):
         )
         btn_edit_meta.pack(side="left")
         create_tooltip(btn_edit_meta, "Edit course, title, assignment scope, and author metadata.")
+
+        # Center: Document Info (Takes remaining middle width)
+        info_box = ctk.CTkFrame(header, fg_color="transparent")
+        info_box.pack(side="left", fill="both", expand=True, padx=(8, 12), pady=6)
+
+        self.lbl_doc_title = ctk.CTkLabel(
+            info_box,
+            text=self.doc.title,
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=("#1a365d", "#63b3ed"),
+            anchor="w",
+        )
+        self.lbl_doc_title.pack(anchor="w", fill="x")
+
+        self.lbl_doc_sub = ctk.CTkLabel(
+            info_box,
+            text=self._format_subtitle(),
+            font=ctk.CTkFont(size=11),
+            text_color=("gray40", "gray60"),
+            anchor="w",
+        )
+        self.lbl_doc_sub.pack(anchor="w", fill="x")
 
         # 2. Main Tabview
         self.tabview = ctk.CTkTabview(self, corner_radius=10, fg_color=("gray95", "gray14"))

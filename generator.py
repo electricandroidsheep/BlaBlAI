@@ -131,14 +131,14 @@ def generate_markdown(doc: ProtocolDocument) -> str:
     ]
 
     if not doc.drops:
-        lines.append("*No interaction drops recorded in this session / Keine Interaktions-Drops erfasst.*")
+        lines.append("*No interactions recorded in this session / Keine Interaktionen erfasst.*")
         lines.append("")
     else:
         for drop in doc.drops:
             decision = (
                 drop.critical_examination.application_decision
                 if drop.critical_examination
-                else "Accepted"
+                else "N/A"
             )
             scope = drop.context_scope.strip() if drop.context_scope else "General / Zero Context"
             clean_prompt = clean_raw_interaction_text(drop.raw_prompt) or "[No prompt provided / Kein Prompt erfasst]"
@@ -150,8 +150,12 @@ def generate_markdown(doc: ProtocolDocument) -> str:
             output_fence = "````text\n" if "```" in clean_output else "```text\n"
             output_end = "\n````" if "```" in clean_output else "\n```"
 
+            retro_str = " *(Retroactive / Nachträglich)*" if drop.is_retroactive else ""
+            item_title = drop.title.strip() if drop.title and drop.title.strip() else drop.core_intent
+            lines.append(f"#### Interaction #{drop.drop_number}: {item_title} — {drop.target_engine} ({drop.timestamp}){retro_str}")
+            if drop.title and drop.title.strip():
+                lines.append(f"- **Core Intent / Primärer Einsatzzweck:** `{drop.core_intent}`")
             lines.extend([
-                f"#### Drop #{drop.drop_number}: {drop.core_intent} — {drop.target_engine} ({drop.timestamp})",
                 f"- **Context Scope / Kontextbereich:** `{scope}`",
                 f"- **Application Decision / Übernahmeentscheidung:** **[{decision}]**",
                 "",
@@ -178,29 +182,36 @@ def generate_markdown(doc: ProtocolDocument) -> str:
             lines.append("---")
             lines.append("")
 
-    # Section B: Fact-Checking Matrix
+    # Section B: Claim & Source Verification Matrix
     lines.extend([
-        "### Section B: Adversarial Fact-Checking Matrix",
-        "#### Abschnitt B: Matrix zur adversarialen Faktenprüfung",
+        "### Section B: Claim & Source Verification Matrix",
+        "#### Abschnitt B: Quellen- & Tatsachenverifikation",
         "",
     ])
 
     all_facts = doc.get_all_fact_checks()
     if not all_facts:
-        lines.append("*No adversarial fact-check claims recorded / Keine adversarialen Faktenprüfungen erfasst.*")
+        lines.append("*No verification claims recorded / Keine Verifikationseinträge erfasst.*")
         lines.append("")
     else:
         lines.extend([
-            "| Ref / Nr. | Claim / Extrahierte Aussage | Primary Source Citation / Primärquelle | Status | Rectification / Audit Note / Prüfvermerk |",
+            "| Ref / Nr. | Claim / Extrahierte Aussage | Verification Sources & Evidence / Primärquellen | Status | Rectification / Audit Note / Prüfvermerk |",
             "| :--- | :--- | :--- | :--- | :--- |",
         ])
         for fc in all_facts:
             claim = fc.claim.replace("|", "\\|").replace("\n", " ").strip()
             source = fc.primary_source.replace("|", "\\|").replace("\n", " ").strip() or "N/A"
+            if fc.is_external_file:
+                source = f"📁 `[File / Datei]` {source}"
             note = fc.rectification_note.replace("|", "\\|").replace("\n", " ").strip() or "None / Keine"
             status_badge = f"**[{fc.status}]**"
             ref = fc.drop_reference or "General"
-            lines.append(f"| **{ref}** | {claim} | {source} | {status_badge} | {note} |")
+            target_drop = next((d for d in doc.drops if d.id == fc.drop_id), None) if fc.drop_id else None
+            if target_drop and target_drop.title and target_drop.title.strip():
+                ref_str = f"**{ref}**<br/>*{target_drop.title.strip()}*"
+            else:
+                ref_str = f"**{ref}**"
+            lines.append(f"| {ref_str} | {claim} | {source} | {status_badge} | {note} |")
         lines.append("")
 
     # Section C: Verification & Audit Trail (Tamper-Evidence)
@@ -211,7 +222,7 @@ def generate_markdown(doc: ProtocolDocument) -> str:
         "#### Abschnitt C: Verifikation & Prüfpfad",
         f"- **Document Integrity Hash / Dokument-Prüfsumme (SHA-256):** `{doc.integrity_hash}`",
         f"- **Audit Timestamp / Zeitstempel (CEST):** `{doc.hash_timestamp}`",
-        f"- **Total Interaction Drops Logged / Protokollierte Interaktionen:** `{len(doc.drops)}`",
+        f"- **Total Interactions Logged / Protokollierte Interaktionen:** `{len(doc.drops)}`",
         f"- **Total Audited Fact-Checks / Geprüfte Fakten:** `{len(all_facts)}`",
         "- **Authenticity Notice / Authentizitätshinweis:** *This cryptographic SHA-256 digest certifies the authenticity and integrity of this protocol at the time of export. Any subsequent manual alteration of recorded interactions invalidates this signature. / Diese kryptographische SHA-256-Prüfsumme bescheinigt die Authentizität und Unverfälschtheit dieses Protokolls zum Zeitpunkt des Exports. Jede nachträgliche manuelle Bearbeitung macht diese Signatur ungültig.*",
         "",
@@ -377,13 +388,17 @@ class NumberedCanvas:
                 self.setFont(font_name, 8)
                 self.setFillColor(HexColor("#4B5563"))
 
+                # Dynamically retrieve dimensions for the current page state (handles Portrait and Landscape)
+                page_w, page_h = self._pagesize
+                right_x = page_w - 45
+
                 # Top Running Header (from page 2 onwards) - Pure Monochrome
                 if self._pageNumber > 1:
                     clean_title = sanitize_text_for_pdf(doc_title, is_ttfont=True)
-                    self.drawString(45, 805, f"{clean_title} — AI Interaction Protocol / KI-Protokoll")
+                    self.drawString(45, page_h - 37, f"{clean_title} — AI Interaction Protocol / KI-Protokoll")
                     self.setStrokeColor(HexColor("#CBD5E0"))
                     self.setLineWidth(0.5)
-                    self.line(45, 798, 550, 798)
+                    self.line(45, page_h - 44, right_x, page_h - 44)
 
                 # Bottom Footer (all pages) - Pure Monochrome with Student ID
                 clean_name = sanitize_text_for_pdf(student_name, is_ttfont=True)
@@ -394,10 +409,10 @@ class NumberedCanvas:
                     footer_text = f"Student: {clean_name}"
                 page_str = f"Page {self._pageNumber} of {page_count} / Seite {self._pageNumber} von {page_count}"
                 self.drawString(45, 32, footer_text)
-                self.drawRightString(550, 32, page_str)
+                self.drawRightString(right_x, 32, page_str)
                 self.setStrokeColor(HexColor("#CBD5E0"))
                 self.setLineWidth(0.5)
-                self.line(45, 42, 550, 42)
+                self.line(45, 42, right_x, 42)
 
                 self.restoreState()
 
@@ -424,11 +439,15 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
     100% self-contained in pure Python with zero external browser dependencies.
     Strictly academic monochrome/grayscale design with perfect margin alignment.
     """
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import (
-        SimpleDocTemplate,
+        BaseDocTemplate,
+        PageTemplate,
+        Frame,
+        NextPageTemplate,
+        PageBreak,
         Paragraph,
         Spacer,
         Table,
@@ -447,9 +466,16 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
     font_mono, font_mono_bold, font_sans, font_sans_bold, has_ttfonts = ensure_system_fonts_registered()
 
     # Document margins: 45pt left/right (~16mm), 52pt top/bottom (~18mm)
-    pdf_doc = SimpleDocTemplate(
+    a4_w, a4_h = A4
+    frame_portrait = Frame(45, 52, a4_w - 90, a4_h - 104, id="F_Portrait", topPadding=0, bottomPadding=0, leftPadding=0, rightPadding=0)
+    template_portrait = PageTemplate(id="Portrait", pagesize=A4, frames=[frame_portrait])
+
+    frame_landscape = Frame(45, 52, a4_h - 90, a4_w - 104, id="F_Landscape", topPadding=0, bottomPadding=0, leftPadding=0, rightPadding=0)
+    template_landscape = PageTemplate(id="Landscape", pagesize=landscape(A4), frames=[frame_landscape])
+
+    pdf_doc = BaseDocTemplate(
         str(out_path),
-        pagesize=A4,
+        pageTemplates=[template_portrait, template_landscape],
         leftMargin=45,
         rightMargin=45,
         topMargin=52,
@@ -693,26 +719,30 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
     story.append(Paragraph(sec_a_hdr, style_h3))
 
     if not doc.drops:
-        story.append(Paragraph("<em>No interaction drops recorded / Keine Interaktions-Drops erfasst.</em>", style_body))
+        story.append(Paragraph("<em>No interactions recorded / Keine Interaktionen erfasst.</em>", style_body))
     else:
         for drop in doc.drops:
             decision = (
                 drop.critical_examination.application_decision
                 if drop.critical_examination
-                else "Accepted"
+                else "N/A"
             )
             scope = drop.context_scope.strip() if drop.context_scope else "General / Zero Context"
 
-            # Header line: Drop #N, Intent, Engine, Timestamp - Monochrome
+            # Header line: Interaction #N, Title/Intent, Engine, Timestamp - Monochrome
+            retro_tag = " &nbsp;<b>[Retroactive / Nachträglich]</b>" if drop.is_retroactive else ""
+            item_title = drop.title.strip() if drop.title and drop.title.strip() else drop.core_intent
             hdr_text = (
-                f"<b>Drop #{drop.drop_number}: {html.escape(drop.core_intent)}</b> — "
+                f"<b>Interaction #{drop.drop_number}: {html.escape(item_title)}</b> — "
                 f"<b>{html.escape(drop.target_engine)}</b> "
-                f"<font color='#6B7280'>({html.escape(drop.timestamp)})</font>"
+                f"<font color='#6B7280'>({html.escape(drop.timestamp)})</font>{retro_tag}"
             )
             p_hdr = Paragraph(hdr_text, style_body)
 
             # Metadata line
+            intent_meta = f"<b>Intent:</b> <i>{html.escape(drop.core_intent)}</i> &nbsp;|&nbsp; " if drop.title and drop.title.strip() else ""
             meta_line = (
+                f"{intent_meta}"
                 f"<b>Context Scope / Kontextbereich:</b> <i>{html.escape(scope)}</i> &nbsp;|&nbsp; "
                 f"<b>Decision / Übernahmeentscheidung:</b> <b>[{html.escape(decision)}]</b>"
             )
@@ -758,16 +788,19 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
             story.append(Spacer(1, 4))
             story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#CBD5E0"), spaceAfter=10))
 
-    # 5. Section B: Fact-Checking Matrix Table (APA / Booktabs Monochrome Style)
+    # 5. Section B: Claim & Source Verification Matrix Table (Landscape A4 Orientation)
+    story.append(NextPageTemplate("Landscape"))
+    story.append(PageBreak())
+
     sec_b_hdr = (
-        "Section B: Adversarial Fact-Checking Matrix<br/>"
-        "<font size='9' color='#4B5563'>Abschnitt B: Matrix zur adversarialen Faktenprüfung</font>"
+        "Section B: Claim &amp; Source Verification Matrix<br/>"
+        "<font size='9' color='#4B5563'>Abschnitt B: Quellen- &amp; Tatsachenverifikation</font>"
     )
     story.append(Paragraph(sec_b_hdr, style_h3))
     all_facts = doc.get_all_fact_checks()
 
     if not all_facts:
-        story.append(Paragraph("<em>No adversarial fact-check claims recorded / Keine adversarialen Faktenprüfungen erfasst.</em>", style_body))
+        story.append(Paragraph("<em>No verification claims recorded / Keine Verifikationseinträge erfasst.</em>", style_body))
     else:
         th_style = ParagraphStyle("TH", parent=style_body, fontName=font_sans_bold, fontSize=8, leading=10.5, textColor=colors.HexColor("#111827"))
         td_style = ParagraphStyle("TD", parent=style_body, fontName=font_sans, fontSize=8, leading=10.5, textColor=colors.HexColor("#1F2937"))
@@ -775,7 +808,7 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
         fc_rows = [[
             Paragraph("Ref / Nr.", th_style),
             Paragraph("Claim / Extrahierte Aussage", th_style),
-            Paragraph("Primary Source / Primärquelle", th_style),
+            Paragraph("Verification Sources &amp; Evidence / Primärquellen", th_style),
             Paragraph("Status", th_style),
             Paragraph("Audit Note / Prüfvermerk", th_style),
         ]]
@@ -787,15 +820,28 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
             clean_src = sanitize_text_for_pdf(fc.primary_source or "N/A", is_ttfont=has_ttfonts)
             clean_note = sanitize_text_for_pdf(fc.rectification_note or "None", is_ttfont=has_ttfonts)
 
+            if fc.is_external_file:
+                src_html = f"<b>[📁 File / Datei]:</b> {html.escape(clean_src)}"
+            else:
+                src_html = html.escape(clean_src)
+
+            target_drop = next((d for d in doc.drops if d.id == fc.drop_id), None) if fc.drop_id else None
+            if target_drop and target_drop.title and target_drop.title.strip():
+                clean_t = sanitize_text_for_pdf(target_drop.title.strip(), is_ttfont=has_ttfonts)
+                ref_p = Paragraph(f"<b>{html.escape(ref)}</b><br/><font size='6.5' color='#4B5563'>{html.escape(clean_t)}</font>", td_style)
+            else:
+                ref_p = Paragraph(f"<b>{html.escape(ref)}</b>", td_style)
+
             fc_rows.append([
-                Paragraph(f"<b>{html.escape(ref)}</b>", td_style),
+                ref_p,
                 Paragraph(html.escape(clean_claim), td_style),
-                Paragraph(html.escape(clean_src), td_style),
+                Paragraph(src_html, td_style),
                 status_p,
                 Paragraph(html.escape(clean_note), td_style),
             ])
 
-        t_matrix = Table(fc_rows, colWidths=[55, 185, 125, 60, 80], repeatRows=1)
+        # Widths: 60 + 230 + 180 + 100 + 181.89 = 751.89 pt (matches landscape A4 width exactly)
+        t_matrix = Table(fc_rows, colWidths=[60, 230, 180, 100, 181.89], repeatRows=1)
         t_style = [
             ('BACKGROUND', (0, 0), (-1, -1), colors.white),
             ('LINEABOVE', (0, 0), (-1, 0), 1.2, colors.HexColor("#111827")),
@@ -811,8 +857,10 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
         t_matrix.setStyle(TableStyle(t_style))
         story.append(t_matrix)
 
-    # 6. Section C: Verification & Audit Trail (Cryptographic Tamper-Evidence) - Monochrome
-    story.append(Spacer(1, 14))
+    # 6. Section C: Verification & Audit Trail (Switch back to Portrait A4 Orientation)
+    story.append(NextPageTemplate("Portrait"))
+    story.append(PageBreak())
+
     sec_c_hdr = (
         "Section C: Verification &amp; Audit Trail<br/>"
         "<font size='9' color='#4B5563'>Abschnitt C: Verifikation &amp; Prüfpfad</font>"
@@ -834,7 +882,7 @@ def render_to_pdf_reportlab(doc: ProtocolDocument, output_pdf_path: str) -> str:
     audit_rows = [
         [Paragraph("Document Integrity Hash / Prüfsumme", style_table_key), Paragraph(f"<font face='{font_mono}' size='7'><b>{hash_val}</b></font>", style_table_val)],
         [Paragraph("Audit Timestamp / Zeitstempel", style_table_key), Paragraph(timestamp_val, style_table_val)],
-        [Paragraph("Total Drops Logged / Protokollierte Drops", style_table_key), Paragraph(str(total_drops), style_table_val)],
+        [Paragraph("Total Interactions Logged / Protokollierte Interaktionen", style_table_key), Paragraph(str(total_drops), style_table_val)],
         [Paragraph("Audited Fact-Checks / Geprüfte Fakten", style_table_key), Paragraph(str(total_facts), style_table_val)],
         [Paragraph("Authenticity Notice / Hinweis", style_table_key), Paragraph(audit_notice_text, style_table_val)],
     ]
@@ -932,11 +980,14 @@ def generate_html(doc: ProtocolDocument, css_content: Optional[str] = None) -> s
     ]
 
     for drop in doc.drops:
-        decision = drop.critical_examination.application_decision if drop.critical_examination else "Accepted"
+        decision = drop.critical_examination.application_decision if drop.critical_examination else "N/A"
         scope = drop.context_scope.strip() if drop.context_scope else "General / Zero Context"
+        retro_badge = " <span class='pill'>Retroactive</span>" if drop.is_retroactive else ""
+        item_title = drop.title.strip() if drop.title and drop.title.strip() else drop.core_intent
         html_parts.append(f"<div class='interaction-drop'>")
-        html_parts.append(f"<h4>Drop #{drop.drop_number}: {html.escape(drop.core_intent)} — {html.escape(drop.target_engine)} ({html.escape(drop.timestamp)})</h4>")
-        html_parts.append(f"<p><strong>Context Scope:</strong> {html.escape(scope)} | <strong>Decision:</strong> [{html.escape(decision)}]</p>")
+        html_parts.append(f"<h4>Interaction #{drop.drop_number}: {html.escape(item_title)} — {html.escape(drop.target_engine)} ({html.escape(drop.timestamp)}){retro_badge}</h4>")
+        intent_html = f"<strong>Intent:</strong> {html.escape(drop.core_intent)} | " if drop.title and drop.title.strip() else ""
+        html_parts.append(f"<p>{intent_html}<strong>Context Scope:</strong> {html.escape(scope)} | <strong>Decision:</strong> [{html.escape(decision)}]</p>")
         html_parts.append("<div class='code-label'>Raw Prompt</div>")
         html_parts.append(f"<pre>{html.escape(drop.raw_prompt)}</pre>")
         html_parts.append("<div class='code-label'>Raw Output</div>")
@@ -945,12 +996,19 @@ def generate_html(doc: ProtocolDocument, css_content: Optional[str] = None) -> s
             html_parts.append(f"<div class='critical-box'><strong>Critical Plausibility Audit:</strong> {html.escape(drop.critical_examination.flaws_plausibility.strip())}</div>")
         html_parts.append("</div>")
 
-    html_parts.append("<h3>Section B: Adversarial Fact-Checking Matrix</h3>")
+    html_parts.append("<h3>Section B: Claim &amp; Source Verification Matrix</h3>")
     all_facts = doc.get_all_fact_checks()
     if all_facts:
-        html_parts.append("<table><thead><tr><th>Ref</th><th>Claim</th><th>Primary Source</th><th>Status</th><th>Note</th></tr></thead><tbody>")
+        html_parts.append("<table><thead><tr><th>Ref</th><th>Claim</th><th>Verification Sources &amp; Evidence</th><th>Status</th><th>Note</th></tr></thead><tbody>")
         for fc in all_facts:
-            html_parts.append(f"<tr><td>{html.escape(fc.drop_reference or 'General')}</td><td>{html.escape(fc.claim)}</td><td>{html.escape(fc.primary_source or 'N/A')}</td><td>[{html.escape(fc.status)}]</td><td>{html.escape(fc.rectification_note or 'None')}</td></tr>")
+            src_text = html.escape(fc.primary_source or 'N/A')
+            if fc.is_external_file:
+                src_text = f"📁 <strong>[File]:</strong> {src_text}"
+            ref_str = html.escape(fc.drop_reference or 'General')
+            target_drop = next((d for d in doc.drops if d.id == fc.drop_id), None) if fc.drop_id else None
+            if target_drop and target_drop.title and target_drop.title.strip():
+                ref_str += f"<br/><small style='color: #6B7280;'>{html.escape(target_drop.title.strip())}</small>"
+            html_parts.append(f"<tr><td>{ref_str}</td><td>{html.escape(fc.claim)}</td><td>{src_text}</td><td>[{html.escape(fc.status)}]</td><td>{html.escape(fc.rectification_note or 'None')}</td></tr>")
         html_parts.append("</tbody></table>")
 
     html_parts.append("</body></html>")

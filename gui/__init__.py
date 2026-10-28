@@ -1,1 +1,1 @@
-"""GUI package for Academic AI Protocol Logger & Exporter."""
+"""GUI package for BlaBlAI (Academic AI Protocol Logger & Exporter)."""

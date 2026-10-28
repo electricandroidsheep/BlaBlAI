@@ -44,6 +44,10 @@ class PreviewView(ctk.CTkFrame):
         action_bar = ctk.CTkFrame(self, corner_radius=10, fg_color=("gray95", "gray14"))
         action_bar.pack(fill="x", padx=16, pady=(12, 8))
 
+        # Buttons on the right (packed first to prevent shrinking)
+        btn_box = ctk.CTkFrame(action_bar, fg_color="transparent")
+        btn_box.pack(side="right", padx=10, pady=8)
+
         # Title
         ctk.CTkLabel(
             action_bar,
@@ -51,10 +55,6 @@ class PreviewView(ctk.CTkFrame):
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=("#1a365d", "#63b3ed"),
         ).pack(side="left", padx=14, pady=10)
-
-        # Buttons on the right
-        btn_box = ctk.CTkFrame(action_bar, fg_color="transparent")
-        btn_box.pack(side="right", padx=10, pady=8)
 
         self.btn_copy = ctk.CTkButton(
             btn_box,

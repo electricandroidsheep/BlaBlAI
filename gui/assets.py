@@ -78,15 +78,16 @@ def generate_blablai_icon(size: int = 128) -> Image.Image:
     return img
 
 
-def get_blablai_ctk_image(size: tuple[int, int] = (32, 32)) -> ctk.CTkImage:
-    """Returns a cached CTkImage of the BlaBlAI icon at the requested size."""
-    if size in _CACHED_ICON_IMAGES:
-        return _CACHED_ICON_IMAGES[size]
+_CACHED_PIL_ICON: Optional[Image.Image] = None
 
-    pil_img = generate_blablai_icon(128)
-    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=size)
-    _CACHED_ICON_IMAGES[size] = ctk_img
-    return ctk_img
+
+def get_blablai_ctk_image(size: tuple[int, int] = (32, 32)) -> ctk.CTkImage:
+    """Returns a CTkImage of the BlaBlAI icon at the requested size."""
+    global _CACHED_PIL_ICON
+    if _CACHED_PIL_ICON is None:
+        _CACHED_PIL_ICON = generate_blablai_icon(128)
+
+    return ctk.CTkImage(light_image=_CACHED_PIL_ICON, dark_image=_CACHED_PIL_ICON, size=size)
 
 
 def ensure_icon_file(dest_dir: Optional[Path] = None) -> Path:

@@ -84,8 +84,7 @@ class TestProtocolEngine(unittest.TestCase):
         self.assertIn("Sven Várszegi, B.A.", md)
         self.assertIn("Master Digital Business Management (FH OÖ / JKU)", md)
         self.assertIn("### Section A: Chronological Interaction Protocol", md)
-        self.assertIn("Drop #1: Synthesis — Claude 3.5 Sonnet", md)
-        self.assertIn("### Section B: Adversarial Fact-Checking Matrix", md)
+        self.assertIn("### Section B: Claim & Source Verification Matrix", md)
         self.assertIn("[Refuted]", md)
         self.assertIn("```text", md)
 

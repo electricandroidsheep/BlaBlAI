@@ -12,12 +12,14 @@ from tkinter import messagebox
 import customtkinter as ctk
 from typing import Optional, Callable, Dict, Any, List
 
+from datetime import datetime, timezone, timedelta
 from models import (
     ProtocolDocument,
     InteractionDrop,
     CriticalExamination,
     FactCheckEntry,
     get_current_cest_time,
+    get_current_date,
 )
 from storage import StorageManager
 from generator import clean_raw_interaction_text
@@ -29,9 +31,6 @@ from i18n import (
     get_localized_decisions,
     canonicalize_decision,
     localize_decision,
-    get_localized_statuses,
-    canonicalize_status,
-    localize_status,
 )
 from gui.tooltip import create_tooltip
 
@@ -73,7 +72,8 @@ class LoggerView(ctk.CTkFrame):
         self.grid_rowconfigure(0, weight=1)
 
         # ----------------- LEFT: Input Form -----------------
-        form_scroll = ctk.CTkScrollableFrame(self, corner_radius=10, fg_color=("gray95", "gray14"))
+        self.form_scroll = ctk.CTkScrollableFrame(self, corner_radius=10, fg_color=("gray95", "gray14"))
+        form_scroll = self.form_scroll
         form_scroll.grid(row=0, column=0, sticky="nsew", padx=(10, 6), pady=10)
 
         # Form Header
@@ -94,17 +94,49 @@ class LoggerView(ctk.CTkFrame):
         # Timestamp
         f_time = ctk.CTkFrame(row1, fg_color="transparent")
         f_time.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        ctk.CTkLabel(f_time, text=t("lbl_timestamp"), font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
+
+        f_time_lbl_row = ctk.CTkFrame(f_time, fg_color="transparent")
+        f_time_lbl_row.pack(fill="x")
+        ctk.CTkLabel(f_time_lbl_row, text=t("lbl_timestamp"), font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
+
+        self.var_retroactive = ctk.BooleanVar(value=False)
+        self.cb_retroactive = ctk.CTkCheckBox(
+            f_time_lbl_row,
+            text=t("lbl_retroactive"),
+            variable=self.var_retroactive,
+            font=ctk.CTkFont(size=11),
+            height=18,
+            checkbox_width=16,
+            checkbox_height=16,
+            command=self._on_retroactive_toggled,
+        )
+        self.cb_retroactive.pack(side="right")
+        create_tooltip(self.cb_retroactive, t("tooltip_retroactive"))
 
         f_time_input = ctk.CTkFrame(f_time, fg_color="transparent")
-        f_time_input.pack(fill="x")
+        f_time_input.pack(fill="x", pady=(2, 0))
         self.var_timestamp = ctk.StringVar(value=get_current_cest_time())
         self.entry_timestamp = ctk.CTkEntry(f_time_input, textvariable=self.var_timestamp, height=32)
         self.entry_timestamp.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        self.btn_calendar = ctk.CTkButton(
+            f_time_input,
+            text=t("btn_pick_datetime"),
+            width=36,
+            height=32,
+            font=ctk.CTkFont(size=13),
+            fg_color=("gray80", "gray25"),
+            text_color=("gray10", "gray90"),
+            hover_color=("gray70", "gray35"),
+            command=self._open_datetime_picker,
+        )
+        self.btn_calendar.pack(side="left", padx=(0, 4))
+        create_tooltip(self.btn_calendar, t("tooltip_pick_datetime"))
+
         btn_refresh_time = ctk.CTkButton(
             f_time_input,
             text=t("btn_now"),
-            width=55,
+            width=50,
             height=32,
             font=ctk.CTkFont(size=11),
             fg_color="transparent",
@@ -120,6 +152,19 @@ class LoggerView(ctk.CTkFrame):
         self.var_engine = ctk.StringVar(value=self.storage.last_used_engine)
         self.combo_engine = ctk.CTkComboBox(f_engine, values=ENGINE_OPTIONS, variable=self.var_engine, height=32)
         self.combo_engine.pack(fill="x")
+
+        # Interaction Title (Optional)
+        f_title = ctk.CTkFrame(form_scroll, fg_color="transparent")
+        f_title.pack(fill="x", pady=(4, 2))
+        ctk.CTkLabel(f_title, text=t("lbl_drop_title"), font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
+        self.var_drop_title = ctk.StringVar(value="")
+        self.entry_drop_title = ctk.CTkEntry(
+            f_title,
+            textvariable=self.var_drop_title,
+            placeholder_text=t("ph_drop_title"),
+            height=32,
+        )
+        self.entry_drop_title.pack(fill="x", pady=(2, 0))
 
         # Row 2: Core Intent & Context Scope
         row2 = ctk.CTkFrame(form_scroll, fg_color="transparent")
@@ -226,40 +271,10 @@ class LoggerView(ctk.CTkFrame):
         self.entry_file_ref.pack(fill="x")
         create_tooltip(self.entry_file_ref, t("tooltip_file_reference"))
 
-        # ----------------- TOGGLES & EXPANDABLE EVALUATION SECTIONS -----------------
-        # Container 1: Critical Reflection & Plausibility
-        self.container_critical = ctk.CTkFrame(form_scroll, fg_color="transparent")
-        self.container_critical.pack(fill="x", pady=(4, 0))
-
-        self.var_enable_critical = ctk.BooleanVar(value=False)
-        self.switch_critical = ctk.CTkSwitch(
-            self.container_critical,
-            text=t("switch_critical"),
-            variable=self.var_enable_critical,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._toggle_critical_frame,
-        )
-        self.switch_critical.pack(anchor="w", pady=(2, 4))
-
-        self.frame_critical = ctk.CTkFrame(self.container_critical, corner_radius=8, fg_color=("gray90", "gray18"))
+        # ----------------- CRITICAL REFLECTION & APPLICATION DECISION (OPTIONAL) -----------------
+        self.frame_critical = ctk.CTkFrame(form_scroll, corner_radius=8, fg_color=("gray90", "gray18"))
+        self.frame_critical.pack(fill="x", pady=(6, 4))
         self._build_critical_frame(self.frame_critical)
-
-        # Container 2: Primary Source Fact-Check
-        self.container_factcheck = ctk.CTkFrame(form_scroll, fg_color="transparent")
-        self.container_factcheck.pack(fill="x", pady=(4, 0))
-
-        self.var_enable_factcheck = ctk.BooleanVar(value=False)
-        self.switch_factcheck = ctk.CTkSwitch(
-            self.container_factcheck,
-            text=t("switch_fact_check"),
-            variable=self.var_enable_factcheck,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._toggle_factcheck_frame,
-        )
-        self.switch_factcheck.pack(anchor="w", pady=(2, 4))
-
-        self.frame_factcheck = ctk.CTkFrame(self.container_factcheck, corner_radius=8, fg_color=("gray90", "gray18"))
-        self._build_factcheck_frame(self.frame_factcheck)
 
         # Continuous Autosave Banner
         banner_autosave = ctk.CTkFrame(form_scroll, fg_color=("gray90", "gray20"), corner_radius=6)
@@ -303,10 +318,12 @@ class LoggerView(ctk.CTkFrame):
         create_tooltip(self.entry_scope, t("tooltip_scope"))
         create_tooltip(self.txt_prompt, t("tooltip_prompt"))
         create_tooltip(self.txt_output, t("tooltip_output"))
-        create_tooltip(self.switch_critical, t("tooltip_crit_toggle"))
-        create_tooltip(self.switch_factcheck, t("tooltip_fc_toggle"))
         create_tooltip(self.btn_submit, t("tooltip_add_drop"))
         create_tooltip(self.btn_cancel_edit, t("tooltip_reset_drop"))
+
+        # Ensure nested textboxes inside form_scroll do not hijack or stall form scrolling
+        for nested_tb in (self.txt_prompt, self.txt_output, self.txt_flaws):
+            self._bind_nested_textbox_scroll(nested_tb)
 
         # ----------------- RIGHT: Active Session Drops List -----------------
         right_container = ctk.CTkFrame(self, corner_radius=10, fg_color=("gray95", "gray14"))
@@ -325,120 +342,153 @@ class LoggerView(ctk.CTkFrame):
         self.scroll_drops = ctk.CTkScrollableFrame(right_container, fg_color="transparent")
         self.scroll_drops.pack(fill="both", expand=True, padx=8, pady=(0, 10))
 
+    def _bind_nested_textbox_scroll(self, ctk_tb: ctk.CTkTextbox) -> None:
+        """
+        Prevents nested CTkTextbox widgets inside form_scroll from swallowing scroll events
+        when they do not have keyboard focus or have reached their top/bottom scroll boundary.
+        """
+        tb = getattr(ctk_tb, "_textbox", None)
+        if not tb:
+            return
+
+        def _can_tb_scroll(scroll_down: bool) -> bool:
+            try:
+                if self.focus_get() != tb:
+                    return False
+                y0, y1 = tb.yview()
+                if y0 <= 0.0 and y1 >= 1.0:
+                    return False
+                return (y1 < 1.0) if scroll_down else (y0 > 0.0)
+            except Exception:
+                return False
+
+        def _on_tb_touchpad(event):
+            raw = int(getattr(event, "delta", 0))
+            low = raw & 0xFFFF
+            dy = low if low < 0x8000 else low - 0x10000
+            if _can_tb_scroll(scroll_down=(dy < 0)):
+                return
+            top = self.winfo_toplevel()
+            if hasattr(top, "_scroll_container_by_touchpad"):
+                top._scroll_container_by_touchpad(self.form_scroll, event)
+                return "break"
+
+        def _on_tb_wheel(event):
+            delta = getattr(event, "delta", 0)
+            if _can_tb_scroll(scroll_down=(delta < 0)):
+                return
+            top = self.winfo_toplevel()
+            if hasattr(top, "_scroll_container_by_wheel"):
+                top._scroll_container_by_wheel(self.form_scroll, event)
+                return "break"
+
+        try:
+            tb.bind("<TouchpadScroll>", _on_tb_touchpad)
+        except Exception:
+            pass
+        for seq in ("<MouseWheel>", "<Shift-MouseWheel>"):
+            try:
+                tb.bind(seq, _on_tb_wheel)
+            except Exception:
+                pass
+
     def _build_critical_frame(self, parent):
-        inner = ctk.CTkFrame(parent, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=14, pady=10)
+        # Section Header
+        ctk.CTkLabel(
+            parent,
+            text=f"🧐 {t('lbl_critical_section_optional')}",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#1a365d", "#63b3ed"),
+        ).pack(anchor="w", padx=14, pady=(10, 2))
 
         # Wizard instruction / subtitle
         ctk.CTkLabel(
-            inner,
+            parent,
             text=t("crit_subhint_desc"),
             font=ctk.CTkFont(size=11),
             text_color=("gray30", "gray70"),
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", padx=14, pady=(0, 6))
 
         # Field 1: Plausibility Flaws
         ctk.CTkLabel(
-            inner,
+            parent,
             text=t("lbl_crit_flaws"),
             font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(anchor="w")
+        ).pack(anchor="w", padx=14)
 
         ctk.CTkLabel(
-            inner,
+            parent,
             text=t("crit_flaws_hint"),
             font=ctk.CTkFont(size=10),
             text_color=("gray40", "gray60"),
-        ).pack(anchor="w")
+        ).pack(anchor="w", padx=14)
 
-        self.txt_flaws = ctk.CTkTextbox(inner, height=60, font=ctk.CTkFont(size=12))
-        self.txt_flaws.pack(fill="x", pady=(2, 8))
+        self.txt_flaws = ctk.CTkTextbox(parent, height=60, font=ctk.CTkFont(size=12))
+        self.txt_flaws.pack(fill="x", padx=14, pady=(2, 8))
 
         # Field 2: Application Decision
         ctk.CTkLabel(
-            inner,
+            parent,
             text=t("lbl_decision"),
             font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(anchor="w")
+        ).pack(anchor="w", padx=14)
 
         ctk.CTkLabel(
-            inner,
+            parent,
             text=t("crit_decision_hint"),
             font=ctk.CTkFont(size=10),
             text_color=("gray40", "gray60"),
-        ).pack(anchor="w")
+        ).pack(anchor="w", padx=14)
 
         localized_decisions = get_localized_decisions()
         self.var_decision = ctk.StringVar(value=localized_decisions[0])
         self.seg_decision = ctk.CTkSegmentedButton(
-            inner,
+            parent,
             values=localized_decisions,
             variable=self.var_decision,
             selected_color="#2b6cb0",
             selected_hover_color="#1a365d",
         )
-        self.seg_decision.pack(anchor="w", pady=(3, 4))
+        self.seg_decision.pack(anchor="w", padx=14, pady=(3, 12))
 
-    def _build_factcheck_frame(self, parent):
-        inner = ctk.CTkFrame(parent, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=14, pady=10)
+    def _open_datetime_picker(self):
+        from gui.datetime_picker import DateTimePickerDialog
 
-        # Wizard instruction / subtitle
-        ctk.CTkLabel(
-            inner,
-            text=t("fc_subhint_desc"),
-            font=ctk.CTkFont(size=11),
-            text_color=("gray30", "gray70"),
-        ).pack(anchor="w", pady=(0, 6))
+        def _on_apply(new_ts: str, is_retro: bool):
+            self.var_timestamp.set(new_ts)
+            self.var_retroactive.set(is_retro)
 
-        # Claim to Verify
-        ctk.CTkLabel(inner, text=t("lbl_fc_claim"), font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(inner, text=t("fc_claim_hint"), font=ctk.CTkFont(size=10), text_color=("gray40", "gray60")).pack(anchor="w")
-        self.var_fc_claim = ctk.StringVar()
-        ctk.CTkEntry(inner, textvariable=self.var_fc_claim, placeholder_text=t("ph_fc_claim"), height=30).pack(fill="x", pady=(2, 6))
+        DateTimePickerDialog(
+            self.winfo_toplevel(),
+            initial_timestamp=self.var_timestamp.get(),
+            is_retroactive=self.var_retroactive.get(),
+            on_apply=_on_apply,
+        )
 
-        # Primary Source Citation
-        ctk.CTkLabel(inner, text=t("lbl_fc_source"), font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(inner, text=t("fc_source_hint"), font=ctk.CTkFont(size=10), text_color=("gray40", "gray60")).pack(anchor="w")
-        self.var_fc_source = ctk.StringVar()
-        ctk.CTkEntry(inner, textvariable=self.var_fc_source, placeholder_text=t("ph_fc_source"), height=30).pack(fill="x", pady=(2, 6))
-
-        # Verification Status
-        ctk.CTkLabel(inner, text=t("lbl_fc_status"), font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(inner, text=t("fc_status_hint"), font=ctk.CTkFont(size=10), text_color=("gray40", "gray60")).pack(anchor="w")
-        localized_statuses = get_localized_statuses()
-        self.var_fc_status = ctk.StringVar(value=localized_statuses[0])
-        combo_status = ctk.CTkComboBox(inner, values=localized_statuses, variable=self.var_fc_status, height=30, width=220)
-        combo_status.pack(anchor="w", pady=(2, 6))
-
-        # Rectification Note
-        ctk.CTkLabel(inner, text=t("lbl_fc_note"), font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(inner, text=t("fc_note_hint"), font=ctk.CTkFont(size=10), text_color=("gray40", "gray60")).pack(anchor="w")
-        self.var_fc_note = ctk.StringVar()
-        ctk.CTkEntry(inner, textvariable=self.var_fc_note, placeholder_text=t("ph_fc_note"), height=30).pack(fill="x", pady=(2, 4))
-
-    def _toggle_critical_frame(self):
-        if self.var_enable_critical.get():
-            self.frame_critical.pack(fill="x", pady=(0, 6))
+    def _on_retroactive_toggled(self):
+        curr = self.var_timestamp.get().strip()
+        date_part = curr.split()[0] if curr else get_current_date()
+        if self.var_retroactive.get():
+            self.var_timestamp.set(f"{date_part} (Retroactive)")
         else:
-            self.frame_critical.pack_forget()
-
-    def _toggle_factcheck_frame(self):
-        if self.var_enable_factcheck.get():
-            self.frame_factcheck.pack(fill="x", pady=(0, 6))
-        else:
-            self.frame_factcheck.pack_forget()
+            time_now = datetime.now(timezone(timedelta(hours=2))).strftime("%H:%M")
+            self.var_timestamp.set(f"{date_part} {time_now} CEST")
 
     def _refresh_timestamp(self):
-        self.var_timestamp.set(get_current_cest_time())
+        if self.var_retroactive.get():
+            self.var_timestamp.set(f"{get_current_date()} (Retroactive)")
+        else:
+            self.var_timestamp.set(get_current_cest_time())
 
     def _reset_form(self):
         self.editing_drop_id = None
         self.lbl_form_header.configure(text=t("log_heading_new"))
         self.btn_submit.configure(text=t("btn_add_drop"))
+        self.var_retroactive.set(False)
         self._refresh_timestamp()
         # Keep the engine you were using!
         self.var_engine.set(self.storage.last_used_engine)
+        self.var_drop_title.set("")
         self.var_intent.set(get_localized_intents()[0])
         self.var_scope.set("")
         self.var_file_ref.set("")
@@ -446,14 +496,6 @@ class LoggerView(ctk.CTkFrame):
         self.txt_output.delete("1.0", "end")
         self.txt_flaws.delete("1.0", "end")
         self.var_decision.set(get_localized_decisions()[0])
-        self.var_fc_claim.set("")
-        self.var_fc_source.set("")
-        self.var_fc_status.set(get_localized_statuses()[0])
-        self.var_fc_note.set("")
-        self.var_enable_critical.set(False)
-        self.var_enable_factcheck.set(False)
-        self._toggle_critical_frame()
-        self._toggle_factcheck_frame()
 
     def _handle_submit(self):
         prompt = self.txt_prompt.get("1.0", "end-1c").strip()
@@ -470,54 +512,41 @@ class LoggerView(ctk.CTkFrame):
         engine = self.var_engine.get().strip() or "Anthropic Claude"
         self.storage.last_used_engine = engine
 
-        crit_exam: Optional[CriticalExamination] = None
-        fact_checks: List[FactCheckEntry] = []
+        flaws = self.txt_flaws.get("1.0", "end-1c").strip()
+        raw_decision = self.var_decision.get()
+        canonical_decision = canonicalize_decision(raw_decision)
+        crit_exam = CriticalExamination(flaws_plausibility=flaws, application_decision=canonical_decision)
 
-        if self.var_enable_critical.get():
-            flaws = self.txt_flaws.get("1.0", "end-1c").strip()
-            raw_decision = self.var_decision.get()
-            canonical_decision = canonicalize_decision(raw_decision)
-            crit_exam = CriticalExamination(flaws_plausibility=flaws, application_decision=canonical_decision)
-
-        if self.var_enable_factcheck.get():
-            claim = self.var_fc_claim.get().strip()
-            if claim:
-                raw_status = self.var_fc_status.get()
-                canonical_stat = canonicalize_status(raw_status)
-                fc = FactCheckEntry(
-                    claim=claim,
-                    primary_source=self.var_fc_source.get().strip(),
-                    status=canonical_stat,
-                    rectification_note=self.var_fc_note.get().strip(),
-                )
-                fact_checks.append(fc)
-
+        drop_title = self.var_drop_title.get().strip()
         raw_intent = self.var_intent.get().strip()
         canonical_intent = canonicalize_intent(raw_intent)
+        is_retro = self.var_retroactive.get()
 
         if self.editing_drop_id:
             target_drop = next((d for d in self.doc.drops if d.id == self.editing_drop_id), None)
             if target_drop:
                 target_drop.timestamp = self.var_timestamp.get().strip() or get_current_cest_time()
+                target_drop.title = drop_title
                 target_drop.target_engine = self.var_engine.get().strip()
                 target_drop.core_intent = canonical_intent
                 target_drop.context_scope = self.var_scope.get().strip()
                 target_drop.raw_prompt = prompt
                 target_drop.raw_output = output
                 target_drop.output_file_reference = file_ref
+                target_drop.is_retroactive = is_retro
                 target_drop.critical_examination = crit_exam
-                target_drop.fact_checks = fact_checks
         else:
             new_drop = InteractionDrop(
                 timestamp=self.var_timestamp.get().strip() or get_current_cest_time(),
+                title=drop_title,
                 target_engine=self.var_engine.get().strip(),
                 core_intent=canonical_intent,
                 context_scope=self.var_scope.get().strip(),
                 raw_prompt=prompt,
                 raw_output=output,
                 output_file_reference=file_ref,
+                is_retroactive=is_retro,
                 critical_examination=crit_exam,
-                fact_checks=fact_checks,
             )
             self.doc.drops.append(new_drop)
 
@@ -547,46 +576,85 @@ class LoggerView(ctk.CTkFrame):
             self._render_drop_card(drop)
 
     def _render_drop_card(self, drop: InteractionDrop):
+        is_editing_this = (self.editing_drop_id == drop.id)
+        border_col = ("#3182ce", "#63b3ed") if is_editing_this else ("gray85", "gray26")
         card = ctk.CTkFrame(
             self.scroll_drops,
             corner_radius=8,
             fg_color=("white", "gray19"),
-            border_width=1,
-            border_color=("gray85", "gray26"),
+            border_width=2 if is_editing_this else 1,
+            border_color=border_col,
+            cursor="hand2",
         )
         card.pack(fill="x", pady=4, padx=2)
+        on_edit_click = lambda e, d=drop: self._load_drop_into_form(d)
+        card.bind("<Double-Button-1>", on_edit_click)
 
         hdr = ctk.CTkFrame(card, fg_color="transparent")
         hdr.pack(fill="x", padx=10, pady=(8, 2))
 
         loc_intent = localize_intent(drop.core_intent)
+        card_title = f"#{drop.drop_number} {drop.title.strip()}" if drop.title and drop.title.strip() else f"#{drop.drop_number} {loc_intent}"
         lbl_num = ctk.CTkLabel(
             hdr,
-            text=f"#{drop.drop_number} {loc_intent}",
+            text=card_title,
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=("#1a365d", "#63b3ed"),
+            cursor="hand2",
         )
         lbl_num.pack(side="left")
+        lbl_num.bind("<Double-Button-1>", on_edit_click)
+
+        if drop.is_retroactive:
+            lbl_retro = ctk.CTkLabel(
+                hdr,
+                text=f"[{t('badge_retroactive')}]",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=("#4a5568", "#a0aec0"),
+                fg_color=("gray85", "gray25"),
+                corner_radius=4,
+                padx=5,
+                pady=1,
+            )
+            lbl_retro.pack(side="left", padx=(6, 0))
 
         lbl_engine = ctk.CTkLabel(
             hdr,
             text=f"{drop.target_engine}",
             font=ctk.CTkFont(size=11),
             text_color=("gray40", "gray60"),
+            cursor="hand2",
         )
         lbl_engine.pack(side="right")
+        lbl_engine.bind("<Double-Button-1>", on_edit_click)
 
         b_row = ctk.CTkFrame(card, fg_color="transparent")
         b_row.pack(fill="x", padx=10, pady=(0, 4))
 
-        decision = drop.critical_examination.application_decision if drop.critical_examination else "Accepted"
+        if drop.title and drop.title.strip():
+            lbl_intent_tag = ctk.CTkLabel(
+                b_row,
+                text=loc_intent,
+                font=ctk.CTkFont(size=10, weight="bold"),
+                fg_color=("gray85", "gray25"),
+                text_color=("gray20", "gray85"),
+                corner_radius=4,
+                padx=5,
+                pady=1,
+                cursor="hand2",
+            )
+            lbl_intent_tag.pack(side="left", padx=(0, 6))
+            lbl_intent_tag.bind("<Double-Button-1>", on_edit_click)
+
+        decision = drop.critical_examination.application_decision if drop.critical_examination else "N/A"
         loc_decision = localize_decision(decision)
         color_map = {
+            "N/A": (("gray85", "gray25"), ("gray35", "gray75")),
             "Accepted": ("#c6f6d5", "#22543d"),
             "Modified": ("#fefcbf", "#744210"),
             "Rejected": ("#fed7d7", "#742a2a"),
         }
-        bg_col, txt_col = color_map.get(decision, ("#edf2f7", "#4a5568"))
+        bg_col, txt_col = color_map.get(decision, (("gray85", "gray25"), ("gray35", "gray75")))
 
         lbl_dec = ctk.CTkLabel(
             b_row,
@@ -597,8 +665,10 @@ class LoggerView(ctk.CTkFrame):
             corner_radius=4,
             padx=6,
             pady=1,
+            cursor="hand2",
         )
         lbl_dec.pack(side="left", padx=(0, 6))
+        lbl_dec.bind("<Double-Button-1>", on_edit_click)
 
         if drop.fact_checks:
             lbl_fc = ctk.CTkLabel(
@@ -606,8 +676,10 @@ class LoggerView(ctk.CTkFrame):
                 text=t("badge_fact_checks", count=len(drop.fact_checks)),
                 font=ctk.CTkFont(size=10),
                 text_color=("#2b6cb0", "#90cdf4"),
+                cursor="hand2",
             )
             lbl_fc.pack(side="left")
+            lbl_fc.bind("<Double-Button-1>", on_edit_click)
 
         snippet = drop.raw_prompt.replace("\n", " ").strip()
         if len(snippet) > 75:
@@ -619,8 +691,10 @@ class LoggerView(ctk.CTkFrame):
             text_color=("gray30", "gray70"),
             anchor="w",
             justify="left",
+            cursor="hand2",
         )
         lbl_snip.pack(fill="x", padx=10, pady=(2, 6))
+        lbl_snip.bind("<Double-Button-1>", on_edit_click)
 
         actions = ctk.CTkFrame(card, fg_color="transparent")
         actions.pack(fill="x", padx=10, pady=(0, 8))
@@ -655,7 +729,9 @@ class LoggerView(ctk.CTkFrame):
         self.lbl_form_header.configure(text=t("log_heading_edit", num=drop.drop_number))
         self.btn_submit.configure(text=t("btn_update_drop", num=drop.drop_number))
 
+        self.var_retroactive.set(drop.is_retroactive)
         self.var_timestamp.set(drop.timestamp)
+        self.var_drop_title.set(drop.title or "")
         self.var_engine.set(drop.target_engine)
         self.var_intent.set(localize_intent(drop.core_intent))
         self.var_scope.set(drop.context_scope)
@@ -667,27 +743,13 @@ class LoggerView(ctk.CTkFrame):
         self.txt_output.delete("1.0", "end")
         self.txt_output.insert("1.0", drop.raw_output)
 
+        self.txt_flaws.delete("1.0", "end")
         if drop.critical_examination:
-            self.var_enable_critical.set(True)
-            self._toggle_critical_frame()
-            self.txt_flaws.delete("1.0", "end")
-            self.txt_flaws.insert("1.0", drop.critical_examination.flaws_plausibility)
+            if drop.critical_examination.flaws_plausibility:
+                self.txt_flaws.insert("1.0", drop.critical_examination.flaws_plausibility)
             self.var_decision.set(localize_decision(drop.critical_examination.application_decision))
         else:
-            self.var_enable_critical.set(False)
-            self._toggle_critical_frame()
-
-        if drop.fact_checks:
-            self.var_enable_factcheck.set(True)
-            self._toggle_factcheck_frame()
-            fc = drop.fact_checks[0]
-            self.var_fc_claim.set(fc.claim)
-            self.var_fc_source.set(fc.primary_source)
-            self.var_fc_status.set(localize_status(fc.status))
-            self.var_fc_note.set(fc.rectification_note)
-        else:
-            self.var_enable_factcheck.set(False)
-            self._toggle_factcheck_frame()
+            self.var_decision.set(get_localized_decisions()[0])
 
     def _delete_drop(self, drop: InteractionDrop):
         confirm = messagebox.askyesno(
@@ -697,8 +759,7 @@ class LoggerView(ctk.CTkFrame):
         if confirm:
             if self.editing_drop_id == drop.id:
                 self._reset_form()
-            self.doc.drops.remove(drop)
-            self.doc.renumber_drops()
+            self.doc.remove_drop(drop)
             self.refresh_drops_list()
             self.on_document_changed()
 

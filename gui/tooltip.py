@@ -9,6 +9,17 @@ import customtkinter as ctk
 from typing import Optional
 
 
+import time
+
+_LAST_SCROLL_TIME: float = 0.0
+
+
+def notify_global_scroll() -> None:
+    """Called by MainWindow scroll handlers to suppress hover tooltips while scrolling."""
+    global _LAST_SCROLL_TIME
+    _LAST_SCROLL_TIME = time.perf_counter()
+
+
 class CTkToolTip:
     """
     Attaches a tooltip to any widget that appears on hover after a short delay.
@@ -35,6 +46,8 @@ class CTkToolTip:
         self.text = text
 
     def _on_enter(self, event=None) -> None:
+        if (time.perf_counter() - _LAST_SCROLL_TIME) < 0.25:
+            return
         self._schedule()
 
     def _on_leave(self, event=None) -> None:
@@ -60,6 +73,8 @@ class CTkToolTip:
 
     def _show(self) -> None:
         if not self.text or self.tip_window is not None:
+            return
+        if (time.perf_counter() - _LAST_SCROLL_TIME) < 0.25:
             return
 
         try:

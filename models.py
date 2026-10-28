@@ -64,9 +64,11 @@ class FactCheckEntry:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     claim: str = ""
     primary_source: str = ""
-    status: str = "Confirmed"  # Confirmed, Refuted, Untestable
+    status: str = "Confirmed"  # Confirmed, Refuted, Clarified, Disputed, Untestable, or custom string
     rectification_note: str = ""
-    drop_reference: str = ""  # e.g., "Drop #1"
+    drop_reference: str = ""  # e.g., "Drop #1" or "Standalone"
+    drop_id: Optional[str] = None  # UUID of linked drop if any
+    is_external_file: bool = False  # True if source evidence is an accompanying file
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -80,13 +82,15 @@ class FactCheckEntry:
             status=data.get("status", "Confirmed"),
             rectification_note=data.get("rectification_note", ""),
             drop_reference=data.get("drop_reference", ""),
+            drop_id=data.get("drop_id"),
+            is_external_file=bool(data.get("is_external_file", False)),
         )
 
 
 @dataclass
 class CriticalExamination:
     flaws_plausibility: str = ""
-    application_decision: str = "Accepted"  # Accepted, Modified, Rejected
+    application_decision: str = "N/A"  # N/A, Accepted, Modified, Rejected
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -97,7 +101,7 @@ class CriticalExamination:
             return None
         return cls(
             flaws_plausibility=data.get("flaws_plausibility", ""),
-            application_decision=data.get("application_decision", "Accepted"),
+            application_decision=data.get("application_decision", "N/A"),
         )
 
 
@@ -106,12 +110,14 @@ class InteractionDrop:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     drop_number: int = 1
     timestamp: str = field(default_factory=get_current_cest_time)
+    title: str = ""  # Optional short descriptive title/summary, e.g. "Visplore Output"
     target_engine: str = "Gemini 1.5 Pro"
     context_scope: str = ""
     core_intent: str = "Synthesis"  # Synthesis, Method Check, Drafting, Brainstorming, Verification, Other
     raw_prompt: str = ""
     raw_output: str = ""
     output_file_reference: str = ""
+    is_retroactive: bool = False
     critical_examination: Optional[CriticalExamination] = None
     fact_checks: List[FactCheckEntry] = field(default_factory=list)
 
@@ -120,12 +126,14 @@ class InteractionDrop:
             "id": self.id,
             "drop_number": self.drop_number,
             "timestamp": self.timestamp,
+            "title": self.title,
             "target_engine": self.target_engine,
             "context_scope": self.context_scope,
             "core_intent": self.core_intent,
             "raw_prompt": self.raw_prompt,
             "raw_output": self.raw_output,
             "output_file_reference": self.output_file_reference,
+            "is_retroactive": self.is_retroactive,
             "critical_examination": self.critical_examination.to_dict() if self.critical_examination else None,
             "fact_checks": [fc.to_dict() for fc in self.fact_checks],
         }
@@ -139,12 +147,14 @@ class InteractionDrop:
             id=data.get("id", str(uuid.uuid4())),
             drop_number=data.get("drop_number", 1),
             timestamp=data.get("timestamp", get_current_cest_time()),
+            title=data.get("title", ""),
             target_engine=data.get("target_engine", "Gemini 1.5 Pro"),
             context_scope=data.get("context_scope", ""),
             core_intent=data.get("core_intent", "Synthesis"),
             raw_prompt=data.get("raw_prompt", ""),
             raw_output=data.get("raw_output", ""),
             output_file_reference=data.get("output_file_reference", ""),
+            is_retroactive=bool(data.get("is_retroactive", False)),
             critical_examination=crit_exam,
             fact_checks=fact_checks,
         )
@@ -184,11 +194,53 @@ class ProtocolDocument:
         return self.integrity_hash
 
     def renumber_drops(self) -> None:
-        """Ensures chronological drops have consecutive sequential numbering starting at 1."""
+        """Ensures chronological interactions have consecutive sequential numbering starting at 1."""
+        drop_map = {}
         for i, drop in enumerate(self.drops, start=1):
             drop.drop_number = i
+            label = f"Interaction #{i}"
+            drop_map[drop.id] = label
             for fc in drop.fact_checks:
-                fc.drop_reference = f"Drop #{i}"
+                fc.drop_id = drop.id
+                fc.drop_reference = label
+
+        for sfc in self.standalone_fact_checks:
+            if sfc.drop_id and sfc.drop_id in drop_map:
+                sfc.drop_reference = drop_map[sfc.drop_id]
+            elif not sfc.drop_id:
+                sfc.drop_reference = "Standalone"
+
+    def remove_drop(self, drop: InteractionDrop) -> None:
+        """Removes a drop, automatically preserving any attached fact checks by moving them to standalone."""
+        if drop in self.drops:
+            for fc in drop.fact_checks:
+                fc.drop_id = None
+                fc.drop_reference = "Standalone"
+                self.standalone_fact_checks.append(fc)
+            self.drops.remove(drop)
+            self.renumber_drops()
+
+    def assign_fact_check(self, fc: FactCheckEntry, target_drop_id: Optional[str]) -> None:
+        """Assigns a fact check to a specific drop or marks it as standalone, moving it between containers."""
+        if fc in self.standalone_fact_checks:
+            self.standalone_fact_checks.remove(fc)
+        for d in self.drops:
+            if fc in d.fact_checks:
+                d.fact_checks.remove(fc)
+
+        fc.drop_id = target_drop_id
+        if target_drop_id:
+            target_drop = next((d for d in self.drops if d.id == target_drop_id), None)
+            if target_drop:
+                fc.drop_reference = f"Interaction #{target_drop.drop_number}"
+                target_drop.fact_checks.append(fc)
+            else:
+                fc.drop_id = None
+                fc.drop_reference = "Standalone"
+                self.standalone_fact_checks.append(fc)
+        else:
+            fc.drop_reference = "Standalone"
+            self.standalone_fact_checks.append(fc)
 
     def get_all_models_used(self) -> str:
         """Collects unique AI models used across all drops in this document."""

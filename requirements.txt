@@ -5,3 +5,4 @@ darkdetect>=0.8.0
 pyinstaller>=6.0.0
 reportlab>=5.0.0
 pillow>=9.0.0
+pypdf>=4.0.0
